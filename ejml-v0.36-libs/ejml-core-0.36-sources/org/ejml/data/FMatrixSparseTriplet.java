@@ -1,0 +1,278 @@
+/*
+ * Copyright (c) 2009-2018, Peter Abeles. All Rights Reserved.
+ *
+ * This file is part of Efficient Java Matrix Library (EJML).
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.ejml.data;
+
+import org.ejml.ops.MatrixIO;
+
+/**
+ * TODO describe
+ *
+ * @author Peter Abeles
+ */
+public class FMatrixSparseTriplet implements FMatrixSparse
+{
+    /**
+     * Storage for row and column coordinate for non-zero elements
+     */
+    public IGrowArray nz_rowcol = new IGrowArray();
+    /**
+     * Storage for value of a non-zero element
+     */
+    public FGrowArray nz_value = new FGrowArray();
+
+    public int nz_length;
+    public int numRows;
+    public int numCols;
+
+    public FMatrixSparseTriplet() {
+    }
+
+    /**
+     *
+     * @param numRows Number of rows in the matrix
+     * @param numCols Number of columns in the matrix
+     * @param initLength Initial maximum length of data array.
+     */
+    public FMatrixSparseTriplet(int numRows, int numCols, int initLength ) {
+        nz_rowcol.reshape(initLength*2);
+        nz_value.reshape(initLength);
+        this.numRows = numRows;
+        this.numCols = numCols;
+    }
+
+    public FMatrixSparseTriplet(FMatrixSparseTriplet orig ) {
+        set(orig);
+    }
+
+    public void reset() {
+        nz_length = 0;
+        numRows = 0;
+        numCols = 0;
+    }
+
+    public void reshape( int numRows , int numCols ) {
+        this.numRows = numRows;
+        this.numCols = numCols;
+        this.nz_length = 0;
+    }
+
+    @Override
+    public void reshape(int numRows, int numCols, int arrayLength) {
+        reshape(numRows, numCols);
+        nz_rowcol.reshape(arrayLength*2);
+        nz_value.reshape(arrayLength);
+    }
+
+    public void addItem(int row , int col , float value ) {
+        if( nz_length == nz_value.data.length ) {
+            int amount = nz_length + 10;
+            nz_value.grow(amount);
+            nz_rowcol.grow(amount*2);
+        }
+        nz_value.data[nz_length] = value;
+        nz_rowcol.data[nz_length*2] = row;
+        nz_rowcol.data[nz_length*2+1] = col;
+        nz_length += 1;
+    }
+
+    public void addItemCheck(int row , int col , float value ) {
+        if( row < 0 || col < 0 || row >= numRows || col >= numCols )
+            throw new IllegalArgumentException("Out of bounds. ("+row+","+col+") "+numRows+" "+numCols);
+        if( nz_length == nz_value.data.length ) {
+            int amount = nz_length + 10;
+            nz_value.grow(amount);
+            nz_rowcol.grow(amount*2);
+        }
+        nz_value.data[nz_length] = value;
+        nz_rowcol.data[nz_length*2] = row;
+        nz_rowcol.data[nz_length*2+1] = col;
+        nz_length += 1;
+    }
+
+    @Override
+    public void set( int row , int col , float value ) {
+        if( row < 0 || row >= numRows || col < 0 || col >= numCols )
+            throw new IllegalArgumentException("Outside of matrix bounds");
+
+        unsafe_set(row,col,value);
+    }
+
+    @Override
+    public void unsafe_set(int row, int col, float value) {
+        int index = nz_index(row,col);
+        if( index < 0 )
+            addItem( row,col,value);
+        else {
+            nz_value.data[index] = value;
+        }
+    }
+
+    @Override
+    public int getNumElements() {
+        return nz_length;
+    }
+
+    @Override
+    public float get( int row , int col ) {
+        if( row < 0 || row >= numRows || col < 0 || col >= numCols )
+            throw new IllegalArgumentException("Outside of matrix bounds");
+
+        return unsafe_get(row,col);
+    }
+
+    @Override
+    public float unsafe_get(int row, int col) {
+        int index = nz_index(row,col);
+        if( index < 0 )
+            return 0;
+        else
+            return nz_value.data[index];
+    }
+
+    public int nz_index(int row , int col ) {
+        int end = nz_length*2;
+        for (int i = 0; i < end; i += 2) {
+            int r = nz_rowcol.data[i];
+            int c = nz_rowcol.data[i+1];
+            if( r == row && c == col )
+                return i/2;
+        }
+        return -1;
+    }
+
+    public int getLength() {
+        return nz_length;
+    }
+
+    @Override
+    public int getNumRows() {
+        return numRows;
+    }
+
+    @Override
+    public int getNumCols() {
+        return numCols;
+    }
+
+    @Override
+    public <T extends Matrix> T copy() {
+        return (T)new FMatrixSparseTriplet(this);
+    }
+
+    @Override
+    public <T extends Matrix> T createLike() {
+        return (T)new FMatrixSparseTriplet(numRows,numCols, nz_length);
+    }
+
+    @Override
+    public void set(Matrix original) {
+        FMatrixSparseTriplet orig = (FMatrixSparseTriplet)original;
+        reshape(orig.numRows,orig.numCols);
+        this.nz_rowcol.set(orig.nz_rowcol);
+        this.nz_value.set(orig.nz_value);
+        this.nz_length = orig.nz_length;
+    }
+
+    @Override
+    public void shrinkArrays() {
+        if( nz_length < nz_value.length ) {
+            float vtmp[] = new float[nz_length];
+            int rctmp[] = new int[nz_length*2];
+
+            System.arraycopy(this.nz_value.data,0,vtmp,0,vtmp.length);
+            System.arraycopy(this.nz_rowcol.data,0,rctmp,0,rctmp.length);
+
+            nz_value.data = vtmp;
+            nz_rowcol.data = rctmp;
+        }
+    }
+
+    @Override
+    public void remove(int row, int col) {
+        int where = nz_index(row,col);
+        if( where >= 0 ) {
+
+            nz_length -= 1;
+            for (int i = where; i < nz_length; i++) {
+                nz_value.data[i] = nz_value.data[i+1];
+            }
+            int end = nz_length*2;
+            for (int i = where*2; i < end; i += 2) {
+                nz_rowcol.data[i] = nz_rowcol.data[i+2];
+                nz_rowcol.data[i+1] = nz_rowcol.data[i+3];
+            }
+        }
+    }
+
+    @Override
+    public boolean isAssigned(int row, int col) {
+        return nz_index(row,col) >= 0;
+    }
+
+    @Override
+    public void zero() {
+        nz_length = 0;
+    }
+
+    @Override
+    public int getNonZeroLength() {
+        return nz_length;
+    }
+
+    @Override
+    public void print() {
+        print(MatrixIO.DEFAULT_FLOAT_FORMAT);
+    }
+
+    @Override
+    public void print( String format ) {
+        System.out.println("Type = "+getClass().getSimpleName()+" , rows = "+numRows+" , cols = "+numCols
+                +" , nz_length = "+ nz_length);
+        for (int row = 0; row < numRows; row++) {
+            for (int col = 0; col < numCols; col++) {
+                int index = nz_index(row,col);
+                if( index >= 0 )
+                    System.out.printf(format,nz_value.data[index]);
+                else
+                    System.out.print("   *  ");
+                if( col != numCols-1 )
+                    System.out.print(" ");
+            }
+            System.out.println();
+        }
+    }
+
+    @Override
+    public void printNonZero() {
+        System.out.println("Type = "+getClass().getSimpleName()+" , rows = "+numRows+" , cols = "+numCols
+                +" , nz_length = "+ nz_length);
+
+        for (int i = 0; i < nz_length; i++) {
+            int row = nz_rowcol.data[i*2];
+            int col = nz_rowcol.data[i*2+1];
+            float value = nz_value.data[i];
+            System.out.printf("%d %d %f\n",row,col,value);
+        }
+    }
+
+    @Override
+    public MatrixType getType() {
+        return MatrixType.FTRIPLET;
+    }
+}
